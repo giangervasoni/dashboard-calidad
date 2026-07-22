@@ -4,7 +4,7 @@ import plotly.express as px
 import re
 
 # ==============================================================================
-# 1. DICCIONARIO MAESTRO DE ESPECIFICACIONES (MATRIZ DE CALIDAD)
+# 1. DICCIONARIO MAESTRO DE ESPECIFICACIONES (MATRIZ DE CALIDAD ACTUALIZADA)
 # ==============================================================================
 SPECS = {
     "Trozos de Maíz": {
@@ -49,9 +49,8 @@ SPECS = {
 # ==============================================================================
 # 2. CONFIGURACIÓN DE LA PÁGINA
 # ==============================================================================
-st.set_page_config(page_title="Dashboard de Calidad", layout="wide")
-st.title("📊 Dashboard de Control Granulométrico")
-st.markdown("Visualización interactiva, detección de outliers y cruce con especificaciones de planta.")
+st.set_page_config(page_title="Dashboard de Calidad Multiproducto", layout="wide")
+st.title("📊 Plataforma de Control Granulométrico y Benchmark de Proveedores")
 
 # ==============================================================================
 # 3. BARRA LATERAL (SUBIDA DE ARCHIVOS Y FILTROS)
@@ -61,29 +60,31 @@ prod_seleccionado = st.sidebar.selectbox("Seleccionar Producto:", list(SPECS.key
 archivo_subido = st.sidebar.file_uploader("Subir reporte LIMS (.csv)", type=["csv"])
 
 st.sidebar.markdown("---")
-st.sidebar.header("2. Filtros de Análisis")
+st.sidebar.header("2. Navegación por Módulos")
+modulo_activo = st.sidebar.radio("Ir a:", [
+    "🔍 Análisis por Malla y Outliers", 
+    "🏆 Scorecard de Proveedores (Vendor Rating)", 
+    "🎛️ Simulador de Especificaciones (R&D)"
+])
 
 # ==============================================================================
 # 4. FUNCIÓN INTELIGENTE DE PARSEO DE DATOS
 # ==============================================================================
 @st.cache_data
 def procesar_datos(file):
-    # Intento de lectura con separadores comunes en exportaciones locales
     df_raw = pd.read_csv(file, sep=";", decimal=",")
     if len(df_raw.columns) < 2:
         file.seek(0)
         df_raw = pd.read_csv(file, sep=",")
     
-    # Detección de formato: ¿Es formato ancho (columnas por malla) o largo (LIMS)?
-    if any("Malla_710" in str(c) or "Malla_250" in str(c) for c in df_raw.columns):
-        # Formato Ancho (Ej: Archivo original Harina de Maíz)
+    # Formato Ancho vs Largo
+    if any("Malla_710" in str(c) or "Malla_250" in str(c) or "Malla_425" in str(c) for c in df_raw.columns):
         cols_retener = ["Proveedor"] + [c for c in df_raw.columns if "Malla" in c or "Fondo" in c]
         df_raw = df_raw[cols_retener]
         df_long = df_raw.melt(id_vars=["Proveedor"], var_name="Malla", value_name="Valor")
         df_long['Malla'] = df_long['Malla'].str.replace("_", " ") + " µm"
         df_long['Malla'] = df_long['Malla'].str.replace("Fondo µm", "Fondo")
     else:
-        # Formato Largo (Ej: Reportes LIMS de Trigo, Arroz, Trozos)
         prov_col = [c for c in df_raw.columns if "entidad" in c.lower() or "proveedor" in c.lower()][0]
         ensayo_col = [c for c in df_raw.columns if "ensayo" in c.lower() or "análisis" in c.lower() or "analisis" in c.lower()][0]
         val_col = [c for c in df_raw.columns if "valor" in c.lower()][0]
@@ -100,70 +101,175 @@ def procesar_datos(file):
             
         df_long['Malla'] = df_long['Tipo_Analisis'].apply(extraer_nombre_malla)
     
-    # Limpieza final de valores negativos o vacíos
     df_long = df_long[df_long['Malla'] != "Otra"].dropna(subset=['Valor']).copy()
     df_long['Valor'] = df_long['Valor'].apply(lambda x: 0.0 if float(x) < 0 else float(x))
     
     return df_long[['Proveedor', 'Malla', 'Valor']]
 
+# Evaluación de cumplimiento según especificación
+def evaluar_cumplimiento(row, producto):
+    malla = row['Malla']
+    valor = row['Valor']
+    if producto in SPECS and malla in SPECS[producto]:
+        lim = SPECS[producto][malla]
+        min_val = lim.get("min", 0.0)
+        max_val = lim.get("max", 100.0)
+        return min_val <= valor <= max_val
+    return True
+
 # ==============================================================================
-# 5. EJECUCIÓN PRINCIPAL
+# 5. EJECUCIÓN PRINCIPAL DE MÓDULOS
 # ==============================================================================
 if archivo_subido is not None:
     try:
         df = procesar_datos(archivo_subido)
+        df['Cumple_Spec'] = df.apply(evaluar_cumplimiento, producto=prod_seleccionado, axis=1)
         
-        # Filtros dinámicos basados en el archivo subido
-        lista_proveedores = ["Todos"] + list(df['Proveedor'].unique())
-        prov_seleccionado = st.sidebar.selectbox("Seleccionar Proveedor:", lista_proveedores)
-        
-        lista_mallas = list(df['Malla'].unique())
-        malla_seleccionada = st.sidebar.selectbox("Seleccionar Fracción (Malla):", lista_mallas)
-        
-        # Filtrado de base de datos
-        df_filtrado = df[df['Malla'] == malla_seleccionada].copy()
-        if prov_seleccionado != "Todos":
-            df_filtrado = df_filtrado[df_filtrado['Proveedor'] == prov_seleccionado]
+        # --- MÓDULO 1: ANÁLISIS DE MALLAS Y OUTLIERS ---
+        if modulo_activo == "🔍 Análisis por Malla y Outliers":
+            st.header(f"Análisis Individual por Malla - {prod_seleccionado}")
             
-        if not df_filtrado.empty:
-            # Cálculo de Outliers (IQR)
-            Q1 = df_filtrado['Valor'].quantile(0.25)
-            Q3 = df_filtrado['Valor'].quantile(0.75)
-            IQR = Q3 - Q1
-            limite_inf = Q1 - 1.5 * IQR
-            limite_sup = Q3 + 1.5 * IQR
-            df_filtrado['Es_Outlier'] = (df_filtrado['Valor'] < limite_inf) | (df_filtrado['Valor'] > limite_sup)
+            lista_proveedores = ["Todos"] + list(df['Proveedor'].unique())
+            prov_sel = st.sidebar.selectbox("Seleccionar Proveedor:", lista_proveedores)
             
-            # --- RENDERIZADO VISUAL ---
-            col1, col2 = st.columns(2)
+            lista_mallas = list(df['Malla'].unique())
+            malla_sel = st.sidebar.selectbox("Seleccionar Fracción (Malla):", lista_mallas)
             
-            with col1:
-                st.subheader("📦 Dispersión de Lotes (Boxplot)")
-                st.write("Identificación de lotes fuera de los desvíos estándar del proceso (1.5 IQR).")
-                fig_box = px.box(df_filtrado, y="Valor", points="all", color_discrete_sequence=["#2980B9"])
-                st.plotly_chart(fig_box, use_container_width=True)
+            df_filt = df[df['Malla'] == malla_sel].copy()
+            if prov_sel != "Todos":
+                df_filt = df_filt[df_filt['Proveedor'] == prov_sel]
                 
-            with col2:
-                st.subheader("🔔 Campana del Proceso (Histograma)")
-                st.write("Distribución de los datos limpios y límites de la matriz de calidad.")
-                df_limpio = df_filtrado[~df_filtrado['Es_Outlier']]
-                fig_hist = px.histogram(df_limpio, x="Valor", nbins=15, color_discrete_sequence=["#27AE60"])
+            if not df_filt.empty:
+                # Detección IQR
+                Q1 = df_filt['Valor'].quantile(0.25)
+                Q3 = df_filt['Valor'].quantile(0.75)
+                IQR = Q3 - Q1
+                df_filt['Es_Outlier'] = (df_filt['Valor'] < (Q1 - 1.5 * IQR)) | (df_filt['Valor'] > (Q3 + 1.5 * IQR))
                 
-                # --- AGREGADO DE LÍNEAS DE ESPECIFICACIÓN (PUNTEADAS) ---
-                if prod_seleccionado in SPECS and malla_seleccionada in SPECS[prod_seleccionado]:
-                    limites = SPECS[prod_seleccionado][malla_seleccionada]
-                    if "min" in limites:
-                        fig_hist.add_vline(x=limites["min"], line_dash="dash", line_color="#C0392B", 
-                                           annotation_text="Mínimo", annotation_position="top left", line_width=2.5)
-                    if "max" in limites:
-                        fig_hist.add_vline(x=limites["max"], line_dash="dash", line_color="#C0392B", 
-                                           annotation_text="Máximo", annotation_position="top right", line_width=2.5)
-                
-                st.plotly_chart(fig_hist, use_container_width=True)
-        else:
-            st.warning("⚠️ No hay datos para la combinación seleccionada.")
+                col1, col2 = st.columns(2)
+                with col1:
+                    st.subheader("📦 Dispersión de Lotes (Boxplot)")
+                    fig_box = px.box(df_filt, y="Valor", points="all", color_discrete_sequence=["#2980B9"])
+                    st.plotly_chart(fig_box, use_container_width=True)
+                with col2:
+                    st.subheader("🔔 Campana del Proceso (Histograma)")
+                    df_limpio = df_filt[~df_filt['Es_Outlier']]
+                    fig_hist = px.histogram(df_limpio, x="Valor", nbins=15, color_discrete_sequence=["#27AE60"])
+                    
+                    if prod_seleccionado in SPECS and malla_sel in SPECS[prod_seleccionado]:
+                        lim = SPECS[prod_seleccionado][malla_sel]
+                        if "min" in lim:
+                            fig_hist.add_vline(x=lim["min"], line_dash="dash", line_color="#C0392B", annotation_text="Min Spec")
+                        if "max" in lim:
+                            fig_hist.add_vline(x=lim["max"], line_dash="dash", line_color="#C0392B", annotation_text="Max Spec")
+                    st.plotly_chart(fig_hist, use_container_width=True)
+
+        # --- MÓDULO 2: SCORECARD Y BENCHMARK DE PROVEEDORES ---
+        elif modulo_activo == "🏆 Scorecard de Proveedores (Vendor Rating)":
+            st.header(f"Evaluación y Ranking de Proveedores - {prod_seleccionado}")
+            st.markdown("Índice de Calidad Granulométrica (ICG) calculado a partir del cumplimiento, variabilidad y tasa de atipicidades.")
             
+            # Cálculo de outliers por malla para todo el dataset
+            def marcar_outlier(df_sub):
+                Q1 = df_sub['Valor'].quantile(0.25)
+                Q3 = df_sub['Valor'].quantile(0.75)
+                IQR = Q3 - Q1
+                df_sub['Es_Outlier'] = (df_sub['Valor'] < (Q1 - 1.5 * IQR)) | (df_sub['Valor'] > (Q3 + 1.5 * IQR))
+                return df_sub
+
+            df_out = df.groupby('Malla', group_keys=False).apply(marcar_outlier)
+            
+            # Agregación por Proveedor
+            scorecard = df_out.groupby('Proveedor').agg(
+                Total_Ensayos=('Valor', 'count'),
+                Cumplimiento_Pct=('Cumple_Spec', lambda x: round(x.mean() * 100, 1)),
+                Tasa_Outliers_Pct=('Es_Outlier', lambda x: round(x.mean() * 100, 1)),
+                Variabilidad_Promedio=('Valor', lambda x: round(x.std(), 2))
+            ).reset_index()
+            
+            # Cálculo del ICG (Fórmula Ponderada: 60% Cumplimiento + 20% Estabilidad + 20% Ausencia de Outliers)
+            max_var = scorecard['Variabilidad_Promedio'].max() if scorecard['Variabilidad_Promedio'].max() > 0 else 1
+            scorecard['Factor_Estabilidad'] = (1 - (scorecard['Variabilidad_Promedio'] / max_var)) * 100
+            
+            scorecard['ICG'] = (
+                (scorecard['Cumplimiento_Pct'] * 0.60) + 
+                (scorecard['Factor_Estabilidad'] * 0.20) + 
+                ((100 - scorecard['Tasa_Outliers_Pct']) * 0.20)
+            ).round(1)
+            
+            scorecard = scorecard.sort_values(by='ICG', ascending=False)
+            
+            # KPI Cards
+            col_kpi1, col_kpi2, col_kpi3 = st.columns(3)
+            col_kpi1.metric("🏆 Mejor Proveedor", scorecard.iloc[0]['Proveedor'], f"ICG: {scorecard.iloc[0]['ICG']}/100")
+            col_kpi2.metric("🎯 Cumplimiento Promedio Global", f"{scorecard['Cumplimiento_Pct'].mean():.1f}%")
+            col_kpi3.metric("⚠️ Tasa Promedio de Outliers", f"{scorecard['Tasa_Outliers_Pct'].mean():.1f}%")
+            
+            st.markdown("---")
+            st.subheader("Tabla Comparativa de Desempeño (Vendor Rating)")
+            
+            st.dataframe(
+                scorecard[['Proveedor', 'ICG', 'Cumplimiento_Pct', 'Tasa_Outliers_Pct', 'Variabilidad_Promedio', 'Total_Ensayos']].rename(columns={
+                    'Cumplimiento_Pct': '% Cumplimiento',
+                    'Tasa_Outliers_Pct': '% Outliers',
+                    'Variabilidad_Promedio': 'Desv. Est. Promedio (SD)'
+                }),
+                use_container_width=True
+            )
+            
+            fig_icg = px.bar(scorecard, x='Proveedor', y='ICG', color='ICG', 
+                             color_continuous_scale='Greens', title="Ranking ICG por Proveedor")
+            st.plotly_chart(fig_icg, use_container_width=True)
+
+        # --- MÓDULO 3: SIMULADOR DE ESPECIFICACIONES (R&D) ---
+        elif modulo_activo == "🎛️ Simulador de Especificaciones (R&D)":
+            st.header("Simulador de Impacto de Ficha Técnica (R&D)")
+            st.markdown("Ajustá los límites teóricos para medir de forma inmediata el impacto sobre la tasa de aprobación de lotes históricos.")
+            
+            malla_sim = st.selectbox("Seleccionar Malla a Simular:", list(df['Malla'].unique()))
+            df_sim = df[df['Malla'] == malla_sim].copy()
+            
+            lim_actual = SPECS.get(prod_seleccionado, {}).get(malla_sim, {})
+            def_min = float(lim_actual.get("min", df_sim['Valor'].min()))
+            def_max = float(lim_actual.get("max", df_sim['Valor'].max()))
+            
+            val_min_data = float(df_sim['Valor'].min())
+            val_max_data = float(df_sim['Valor'].max())
+            
+            st.subheader(f"Configurar Nuevos Límites Propuestos para {malla_sim}")
+            col_s1, col_s2 = st.columns(2)
+            with col_s1:
+                nuevo_min = st.slider("Nuevo Límite MÍNIMO (%)", min_value=0.0, max_value=val_max_data, value=def_min, step=0.5)
+            with col_s2:
+                nuevo_max = st.slider("Nuevo Límite MÁXIMO (%)", min_value=nuevo_min, max_value=val_max_data + 10.0, value=def_max, step=0.5)
+                
+            df_sim['Cumple_Actual'] = df_sim.apply(evaluar_cumplimiento, producto=prod_seleccionado, axis=1)
+            df_sim['Cumple_Nuevo'] = (df_sim['Valor'] >= nuevo_min) & (df_sim['Valor'] <= nuevo_max)
+            
+            pct_actual = (df_sim['Cumple_Actual'].sum() / len(df_sim)) * 100
+            pct_nuevo = (df_sim['Cumple_Nuevo'].sum() / len(df_sim)) * 100
+            delta = pct_nuevo - pct_actual
+            
+            st.markdown("---")
+            st.subheader("Impacto Estimado en Aprobación de Lotes")
+            c1, c2, c3 = st.columns(3)
+            c1.metric("% Cumplimiento Actual (Ficha Vigente)", f"{pct_actual:.1f}%")
+            c2.metric("% Cumplimiento Propuesto (Nueva Ficha)", f"{pct_nuevo:.1f}%", f"{delta:+.1f}% vs Actual")
+            c3.metric("Lotes Recuperados / Impactados", f"{df_sim['Cumple_Nuevo'].sum()} de {len(df_sim)} lotes")
+            
+            fig_sim = px.histogram(df_sim, x="Valor", nbins=20, title=f"Distribución de {malla_sim} vs Límites", color_discrete_sequence=["#27AE60"])
+            
+            if "min" in lim_actual:
+                fig_sim.add_vline(x=lim_actual["min"], line_dash="dash", line_color="#C0392B", annotation_text="Min Actual")
+            if "max" in lim_actual:
+                fig_sim.add_vline(x=lim_actual["max"], line_dash="dash", line_color="#C0392B", annotation_text="Max Actual")
+                
+            fig_sim.add_vline(x=nuevo_min, line_dash="solid", line_color="#2980B9", annotation_text="NUEVO Min", line_width=3)
+            fig_sim.add_vline(x=nuevo_max, line_dash="solid", line_color="#2980B9", annotation_text="NUEVO Max", line_width=3)
+            
+            st.plotly_chart(fig_sim, use_container_width=True)
+
     except Exception as e:
-        st.error(f"❌ Ocurrió un error al procesar el archivo. Asegurate de que sea un reporte del LIMS válido. Detalle: {e}")
+        st.error(f"❌ Ocurrió un error al procesar el archivo. Detalle: {e}")
 else:
-    st.info("👆 Por favor, selecciona un producto y sube tu archivo CSV en la barra lateral izquierda para comenzar el análisis.")
+    st.info("👆 Por favor, selecciona un producto y sube tu archivo CSV en la barra lateral izquierda para comenzar.")
