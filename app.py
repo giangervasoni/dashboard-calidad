@@ -209,7 +209,7 @@ if archivo_subido is not None:
             st.subheader("Tabla Comparativa de Desempeño")
             
             st.dataframe(
-                scorecard[['Proveedor', 'Índice de Calidad Granulométrica (ICG)', 'Cumplimiento_Pct', 'Tasa_Outliers_Pct', 'Variabilidad_Promedio', 'Total_Ensayos']].rename(columns={
+                scorecard[['Proveedor', 'ICG', 'Cumplimiento_Pct', 'Tasa_Outliers_Pct', 'Variabilidad_Promedio', 'Total_Ensayos']].rename(columns={
                     'Cumplimiento_Pct': '% Cumplimiento',
                     'Tasa_Outliers_Pct': '% Outliers',
                     'Variabilidad_Promedio': 'Desv. Est. Promedio (SD)'
