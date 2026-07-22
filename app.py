@@ -62,8 +62,8 @@ archivo_subido = st.sidebar.file_uploader("Subir reporte LIMS (.csv)", type=["cs
 st.sidebar.markdown("---")
 st.sidebar.header("2. Navegación por Módulos")
 modulo_activo = st.sidebar.radio("Ir a:", [
-    "🔍 Análisis por Malla y Outliers", 
-    "🏆 Scorecard de Proveedores (Vendor Rating)", 
+    "🔍 Análisis por Malla", 
+    "🏆 Scorecard de Proveedores", 
     "🎛️ Simulador de Especificaciones (R&D)"
 ])
 
@@ -165,7 +165,7 @@ if archivo_subido is not None:
                     st.plotly_chart(fig_hist, use_container_width=True)
 
         # --- MÓDULO 2: SCORECARD Y BENCHMARK DE PROVEEDORES ---
-        elif modulo_activo == "🏆 Scorecard de Proveedores (Vendor Rating)":
+        elif modulo_activo == "🏆 Scorecard de Proveedores":
             st.header(f"Evaluación y Ranking de Proveedores - {prod_seleccionado}")
             st.markdown("Índice de Calidad Granulométrica (ICG) calculado a partir del cumplimiento, variabilidad y tasa de atipicidades.")
             
@@ -206,10 +206,10 @@ if archivo_subido is not None:
             col_kpi3.metric("⚠️ Tasa Promedio de Outliers", f"{scorecard['Tasa_Outliers_Pct'].mean():.1f}%")
             
             st.markdown("---")
-            st.subheader("Tabla Comparativa de Desempeño (Vendor Rating)")
+            st.subheader("Tabla Comparativa de Desempeño")
             
             st.dataframe(
-                scorecard[['Proveedor', 'ICG', 'Cumplimiento_Pct', 'Tasa_Outliers_Pct', 'Variabilidad_Promedio', 'Total_Ensayos']].rename(columns={
+                scorecard[['Proveedor', 'Índice de Calidad Granulométrica (ICG)', 'Cumplimiento_Pct', 'Tasa_Outliers_Pct', 'Variabilidad_Promedio', 'Total_Ensayos']].rename(columns={
                     'Cumplimiento_Pct': '% Cumplimiento',
                     'Tasa_Outliers_Pct': '% Outliers',
                     'Variabilidad_Promedio': 'Desv. Est. Promedio (SD)'
