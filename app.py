@@ -63,7 +63,7 @@ st.sidebar.markdown("---")
 st.sidebar.header("2. Navegación por Módulos")
 modulo_activo = st.sidebar.radio("Ir a:", [
     "🔍 Análisis por Malla y Outliers", 
-    "🏆 Scorecard de Proveedores", 
+    "🏆 Scorecard de Proveedores (Vendor Rating)", 
     "🎛️ Simulador de Especificaciones (R&D)"
 ])
 
